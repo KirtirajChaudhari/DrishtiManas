@@ -1,0 +1,33 @@
+# Global ignores to keep Docker build context small
+.git
+.gitignore
+.env*
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.so
+*.db
+*.sqlite3
+
+# Python environments
+.venv/
+env/
+venv/
+ENV/
+
+# Node artifacts
+frontend/node_modules/
+frontend/.vite/
+frontend/dist/
+
+# Data/model payloads
+models/
+data/
+notebooks/
+
+# Editor/OS cruft
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
