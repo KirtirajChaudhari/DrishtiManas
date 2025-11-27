@@ -231,10 +231,6 @@ Contributions are welcome! Please open an issue to discuss major changes. This p
 
 Drishti Manas is intended for screening support and research workflows only. Final diagnoses rest with qualified clinicians.
 
-## 📧 Contact
-
-Questions? Reach out at `contact@drishti-manas.health`.
-
 ---
 
 **Built with care to advance accessible vision and neuro health**
