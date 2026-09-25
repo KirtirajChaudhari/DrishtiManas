@@ -5,10 +5,11 @@ time (on images uploaded through the web app), so the network always sees
 identically prepared inputs.
 
 Pipeline for one image:
-    any image -> grayscale -> centre square crop -> resize to 28x28 -> [0, 1]
+    any image -> grayscale -> centre square crop -> resize to SxS (28 or 64) -> [0, 1]
               -> feature vector (raw pixels and/or HOG descriptor)
               -> z-score standardisation with training-set statistics
 """
+
 from __future__ import annotations
 
 import io
@@ -52,7 +53,16 @@ def colourfulness(image: Image.Image) -> float:
 
 
 # ------------------------------------------------------------------ HOG features
-def hog(images: np.ndarray, cell: int = 4, bins: int = 9, block: int = 2) -> np.ndarray:
+def hog(images: np.ndarray, cell: int = 4, bins: int = 9, block: int = 2, chunk: int = 4096) -> np.ndarray:
+    """Chunked wrapper around `_hog` so large datasets do not exhaust memory."""
+    if images.shape[0] > chunk:
+        return np.concatenate(
+            [_hog(images[i : i + chunk], cell, bins, block) for i in range(0, images.shape[0], chunk)]
+        )
+    return _hog(images, cell, bins, block)
+
+
+def _hog(images: np.ndarray, cell: int = 4, bins: int = 9, block: int = 2) -> np.ndarray:
     """Histogram of Oriented Gradients for a batch of (N, H, W) grayscale images.
 
     1. Gradients gx, gy by central differences.
@@ -81,18 +91,17 @@ def hog(images: np.ndarray, cell: int = 4, bins: int = 9, block: int = 2) -> np.
     lo_bin, hi_bin, frac = (a[:, : ch * cell, : cw * cell] for a in (lo_bin, hi_bin, frac))
     cell_idx = (np.arange(ch * cell) // cell)[:, None] * cw + (np.arange(cw * cell) // cell)[None, :]
 
-    hist = np.zeros((n, ch * cw * bins), dtype=np.float32)
-    base = cell_idx[None] * bins
-    flat_hist = hist.reshape(-1)
+    size = n * ch * cw * bins
     offset = (np.arange(n) * ch * cw * bins)[:, None, None]
-    np.add.at(flat_hist, (offset + base + lo_bin).ravel(), (mag * (1 - frac)).ravel())
-    np.add.at(flat_hist, (offset + base + hi_bin).ravel(), (mag * frac).ravel())
-    hist = flat_hist.reshape(n, ch, cw, bins)
+    base = offset + cell_idx[None] * bins
+    flat_hist = np.bincount((base + lo_bin).ravel(), weights=(mag * (1 - frac)).ravel(), minlength=size)
+    flat_hist += np.bincount((base + hi_bin).ravel(), weights=(mag * frac).ravel(), minlength=size)
+    hist = flat_hist.astype(np.float32).reshape(n, ch, cw, bins)
 
     by, bx = ch - block + 1, cw - block + 1
-    blocks = np.stack(
-        [hist[:, i : i + by, j : j + bx, :] for i in range(block) for j in range(block)], axis=3
-    ).reshape(n, by, bx, block * block * bins)
+    blocks = np.stack([hist[:, i : i + by, j : j + bx, :] for i in range(block) for j in range(block)], axis=3).reshape(
+        n, by, bx, block * block * bins
+    )
     eps = 1e-6
     blocks = blocks / np.sqrt(np.sum(blocks**2, axis=-1, keepdims=True) + eps**2)
     blocks = np.minimum(blocks, 0.2)
@@ -101,26 +110,55 @@ def hog(images: np.ndarray, cell: int = 4, bins: int = 9, block: int = 2) -> np.
 
 
 # ------------------------------------------------------------------ extractor
+def resize_batch(images: np.ndarray, size: int) -> np.ndarray:
+    """Bicubic resize of a (N, H, W) batch to (N, size, size) float32 in [0, 1].
+
+    uint8 input is treated as 0-255; float input is assumed to already be in [0, 1]. The
+    scale is decided by dtype, not by the pixel values, so a nearly-black uint8 image (max
+    pixel <= 1) is still divided by 255.
+    """
+    if images.shape[1] == size:
+        out = images.astype(np.float32)
+        return out / 255.0 if images.dtype == np.uint8 else out
+    src = images if images.dtype == np.uint8 else np.clip(images * 255, 0, 255).astype(np.uint8)
+    out = np.stack(
+        [np.asarray(Image.fromarray(im).resize((size, size), Image.Resampling.BICUBIC)) for im in src]
+    ).astype(np.float32)
+    return out / 255.0
+
+
 @dataclass
 class FeatureExtractor:
-    """Turns (N, 28, 28) images into standardised feature vectors."""
+    """Turns (N, S, S) grayscale images into standardised feature vectors.
 
-    kind: str = "pixels+hog"  # "pixels" | "hog" | "pixels+hog"
+    kind        "pixels" | "hog" | "pixels+hog"
+    image_size  side length every image is preprocessed to (28 or 64)
+    pixel_size  raw-pixel features are taken after downsampling to this size
+    hog_cells   HOG cell sizes in pixels (on the image_size image); more than one
+                value concatenates a coarse descriptor (large-scale contrast, e.g.
+                the overall retinal layer structure) with a fine one (small-scale
+                texture, e.g. individual drusen deposits), which a single cell
+                size cannot represent at once
+    """
+
+    kind: str = "pixels+hog"
+    image_size: int = IMAGE_SIZE
+    pixel_size: int = IMAGE_SIZE
+    hog_cells: list[int] = field(default_factory=lambda: [4])
     mean: np.ndarray | None = field(default=None, repr=False)
     std: np.ndarray | None = field(default=None, repr=False)
 
     def raw_features(self, images: np.ndarray) -> np.ndarray:
-        images = images.astype(np.float32)
-        if images.max() > 1.0:
-            images = images / 255.0
+        images = resize_batch(images, self.image_size)
         parts = []
         if "pixels" in self.kind:
-            parts.append(images.reshape(images.shape[0], -1))
+            pix = images if self.pixel_size == self.image_size else resize_batch(images, self.pixel_size)
+            parts.append(pix.reshape(pix.shape[0], -1))
         if "hog" in self.kind:
-            parts.append(hog(images))
+            parts.extend(hog(images, cell=c) for c in self.hog_cells)
         if not parts:
             raise ValueError(f"Unknown feature kind '{self.kind}'")
-        return np.concatenate(parts, axis=1)
+        return np.concatenate(parts, axis=1).astype(np.float32)
 
     def fit(self, images: np.ndarray) -> "FeatureExtractor":
         feats = self.raw_features(images)
@@ -131,7 +169,7 @@ class FeatureExtractor:
     def transform(self, images: np.ndarray) -> np.ndarray:
         if self.mean is None or self.std is None:
             raise RuntimeError("FeatureExtractor must be fitted first")
-        return ((self.raw_features(images) - self.mean) / self.std).astype(np.float64)
+        return ((self.raw_features(images) - self.mean) / self.std).astype(np.float32)
 
     def fit_transform(self, images: np.ndarray) -> np.ndarray:
         return self.fit(images).transform(images)
@@ -139,3 +177,11 @@ class FeatureExtractor:
     @property
     def dim(self) -> int:
         return 0 if self.mean is None else int(self.mean.shape[0])
+
+    def spec(self) -> dict:
+        return {
+            "kind": self.kind,
+            "image_size": self.image_size,
+            "pixel_size": self.pixel_size,
+            "hog_cells": list(self.hog_cells),
+        }

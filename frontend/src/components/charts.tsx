@@ -88,12 +88,18 @@ export function RunsLossChart({ runs, height = 260 }: { runs: TuningRun[]; heigh
     });
     return row;
   });
+  // A diverging run (e.g. a too-large learning rate) can reach losses 10-100x higher than the rest;
+  // cap the axis so the converging runs stay readable and note the clipped runs below the chart.
+  const firstLosses = runs.map((r) => r.history?.[0]?.val_loss).filter((v): v is number => typeof v === "number").sort((a, b) => a - b);
+  const cap = firstLosses.length ? firstLosses[Math.floor(firstLosses.length / 2)] * 2 : undefined;
+  const clipped = cap === undefined ? [] : runs.filter((r) => r.history?.some((h) => (h.val_loss ?? Infinity) > cap)).map((r) => r.label);
   return (
+    <>
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
         <CartesianGrid stroke={t.grid} vertical={false} />
         <XAxis dataKey="epoch" {...axisProps} height={36} label={{ value: "Epoch", position: "insideBottom", offset: -2, fill: t.axis, fontSize: 12 }} />
-        <YAxis {...axisProps} width={52} tickFormatter={(v: number) => v.toFixed(2)} domain={[0, "auto"]} />
+        <YAxis {...axisProps} width={52} tickFormatter={(v: number) => v.toFixed(2)} domain={[0, cap ?? "auto"]} allowDataOverflow={cap !== undefined} />
         <Tooltip {...tooltipProps} formatter={(v: number) => v.toFixed(4)} labelFormatter={(e) => `Epoch ${e}`} />
         <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12 }} />
         {runs.map((r, i) => (
@@ -110,6 +116,12 @@ export function RunsLossChart({ runs, height = 260 }: { runs: TuningRun[]; heigh
         ))}
       </LineChart>
     </ResponsiveContainer>
+    {clipped.length > 0 && (
+      <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+        Axis capped at {cap?.toFixed(2)}; {clipped.join(", ")} diverged or spiked above it (see the table).
+      </p>
+    )}
+    </>
   );
 }
 

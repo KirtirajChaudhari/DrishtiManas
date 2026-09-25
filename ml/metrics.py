@@ -1,4 +1,5 @@
 """Classification metrics implemented from the confusion matrix."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -14,9 +15,9 @@ def confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, num_classes: int) -
 def classification_report(y_true: np.ndarray, y_pred: np.ndarray, class_names: list[str]) -> dict:
     """Accuracy plus per-class / macro / weighted precision, recall and F1.
 
-        precision_k = TP_k / (TP_k + FP_k)    of everything predicted k, how much was k
-        recall_k    = TP_k / (TP_k + FN_k)    of everything truly k, how much was found
-        F1_k        = 2 * P_k * R_k / (P_k + R_k)
+    precision_k = TP_k / (TP_k + FP_k)    of everything predicted k, how much was k
+    recall_k    = TP_k / (TP_k + FN_k)    of everything truly k, how much was found
+    F1_k        = 2 * P_k * R_k / (P_k + R_k)
     """
     k = len(class_names)
     cm = confusion_matrix(y_true, y_pred, k)

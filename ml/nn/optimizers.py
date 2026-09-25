@@ -1,4 +1,5 @@
 """Parameter update rules applied after backpropagation computes the gradients."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -7,8 +8,8 @@ import numpy as np
 class SGD:
     """Mini-batch gradient descent with optional (classical) momentum.
 
-        v <- mu * v - lr * dW
-        W <- W + v
+    v <- mu * v - lr * dW
+    W <- W + v
     """
 
     def __init__(self, lr: float = 0.01, momentum: float = 0.9) -> None:

@@ -1,4 +1,5 @@
 """Vercel serverless entry point: exposes the FastAPI app for every /api/* route."""
+
 import sys
 from pathlib import Path
 

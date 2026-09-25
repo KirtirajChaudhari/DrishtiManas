@@ -2,7 +2,8 @@
 
 OCTMNIST (MedMNIST v2, Yang et al., Scientific Data 2023) contains 109,309
 retinal optical coherence tomography (OCT) B-scans from Kermany et al., Cell
-2018, pre-processed to 28x28 grayscale and split into train / val / test.
+2018, pre-processed to 28x28 grayscale (MedMNIST+ also provides 64x64,
+128x128 and 224x224) and split into train / val / test.
 
 Classes
     0  CNV     choroidal neovascularisation
@@ -12,6 +13,7 @@ Classes
 
 License: CC BY 4.0.
 """
+
 from __future__ import annotations
 
 import os
@@ -24,10 +26,18 @@ import numpy as np
 
 DATA_DIR = Path(os.environ.get("DRISHTI_DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
 
-SOURCES = [
-    "https://zenodo.org/records/10519652/files/octmnist.npz?download=1",
-    "https://huggingface.co/datasets/albertvillanova/medmnist-v2/resolve/main/octmnist.npz",
-]
+
+def filename(size: int) -> str:
+    return "octmnist.npz" if size == 28 else f"octmnist_{size}.npz"
+
+
+def sources(size: int) -> list[str]:
+    name = filename(size)
+    return [
+        f"https://zenodo.org/records/10519652/files/{name}?download=1",
+        f"https://huggingface.co/datasets/albertvillanova/medmnist-v2/resolve/main/{name}",
+    ]
+
 
 CLASSES = [
     {
@@ -75,10 +85,10 @@ class OCTMNIST:
     test: Split
 
 
-def download(dest: Path) -> Path:
+def download(dest: Path, size: int = 28) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     errors = []
-    for url in SOURCES:
+    for url in sources(size):
         try:
             print(f"Downloading {url}")
             tmp = dest.with_suffix(".part")
@@ -89,15 +99,16 @@ def download(dest: Path) -> Path:
         except Exception as exc:  # noqa: BLE001 - try the next mirror
             errors.append(f"{url}: {exc}")
     raise RuntimeError(
-        "Could not download OCTMNIST. Download octmnist.npz manually from "
+        f"Could not download OCTMNIST. Download {dest.name} manually from "
         "https://zenodo.org/records/10519652 and place it at " + str(dest) + "\n" + "\n".join(errors)
     )
 
 
-def load_octmnist(path: str | Path | None = None) -> OCTMNIST:
-    path = Path(path) if path else DATA_DIR / "octmnist.npz"
+def load_octmnist(path: str | Path | None = None, size: int = 28) -> OCTMNIST:
+    """Load OCTMNIST at 28x28 (default) or one of the MedMNIST+ sizes (64, 128, 224)."""
+    path = Path(path) if path else DATA_DIR / filename(size)
     if not path.exists():
-        download(path)
+        download(path, size)
     data = np.load(path)
 
     def split(name: str) -> Split:

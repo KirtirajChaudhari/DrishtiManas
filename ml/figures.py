@@ -1,4 +1,5 @@
 """Static PNG figures for the written report (the web app draws its own charts)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -95,8 +96,28 @@ def tuning(experiments: list[dict], out_dir: Path) -> None:
         axes[0].set_title(f"{exp['title']}: accuracy")
         axes[0].legend()
         for i, r in enumerate(runs):
-            axes[1].plot([h["epoch"] for h in r["history"]], [h["val_loss"] for h in r["history"]],
-                         color=SERIES[i % len(SERIES)], label=r["label"])
+            axes[1].plot(
+                [h["epoch"] for h in r["history"]],
+                [h["val_loss"] for h in r["history"]],
+                color=SERIES[i % len(SERIES)],
+                label=r["label"],
+            )
+        # Cap the axis so a diverging run (e.g. learning rate 0.1) does not flatten the others.
+        first = sorted(r["history"][0]["val_loss"] for r in runs if r["history"] and r["history"][0]["val_loss"])
+        if first:
+            cap = first[len(first) // 2] * 2
+            if any((h["val_loss"] or np.inf) > cap for r in runs for h in r["history"]):
+                axes[1].set_ylim(0, cap)
+                axes[1].text(
+                    0.98,
+                    0.02,
+                    "axis capped; diverging runs clipped",
+                    transform=axes[1].transAxes,
+                    ha="right",
+                    va="bottom",
+                    fontsize=7,
+                    color=MUTED,
+                )
         axes[1].set_xlabel("Epoch")
         axes[1].set_ylabel("Validation loss")
         axes[1].set_title(f"{exp['title']}: validation loss")
@@ -155,11 +176,31 @@ def make_figures(report: dict, out_dir: Path, ds) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     labels = [c["code"] for c in report["dataset"]["classes"]]
     curves(report["final"]["history"], out_dir / "final_training_curves.png")
-    confusion(report["final"]["test"]["confusion_matrix"], labels, out_dir / "confusion_matrix_test.png",
-              "Confusion matrix (test set)")
-    confusion(report["final"]["validation"]["confusion_matrix"], labels, out_dir / "confusion_matrix_val.png",
-              "Confusion matrix (validation set)")
+    confusion(
+        report["final"]["test"]["confusion_matrix"],
+        labels,
+        out_dir / "confusion_matrix_test.png",
+        "Confusion matrix (test set)",
+    )
+    confusion(
+        report["final"]["validation"]["confusion_matrix"],
+        labels,
+        out_dir / "confusion_matrix_val.png",
+        "Confusion matrix (validation set)",
+    )
     tuning(report["tuning"]["experiments"], out_dir)
     activations(out_dir / "activation_functions.png")
     samples_grid(ds, out_dir / "dataset_samples.png", report["dataset"]["classes"])
     class_distribution(report["dataset"]["counts"], labels, out_dir / "class_distribution.png")
+
+
+if __name__ == "__main__":
+    # Re-render the figures from an existing report without retraining:  python -m ml.figures
+    import json
+
+    from .data import load_octmnist
+    from .inference import ARTIFACTS_DIR
+
+    rep = json.loads((ARTIFACTS_DIR / "report.json").read_text())
+    make_figures(rep, ARTIFACTS_DIR / "figures", load_octmnist(size=rep["dataset"]["image_shape"][0]))
+    print("figures written to", ARTIFACTS_DIR / "figures")

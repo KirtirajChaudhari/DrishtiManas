@@ -46,6 +46,8 @@ export default function LearnPage() {
   const { report } = useReport();
   const perceptron = report?.baselines.find((b) => b.name.startsWith("Single-layer"));
   const final = report?.final;
+  const size = report?.dataset.image_shape[0] ?? 64;
+  const res = `${size} × ${size}`;
 
   return (
     <div>
@@ -65,9 +67,10 @@ export default function LearnPage() {
             </p>
             <p>
               We use OCTMNIST, the MedMNIST v2 version of the Kermany et al. (2018) dataset: 109,309 labelled B-scans,
-              resized to 28 × 28 grayscale and split into training (97,477), validation (10,832) and test (1,000) sets.
+              available as {res} grayscale images and split into training (97,477), validation (10,832) and test
+              (1,000) sets.
               Every image, whether from the dataset or uploaded in the browser, goes through the same preprocessing:
-              grayscale, centre square crop, resize to 28 × 28, and scaling to [0, 1]. We then extract{" "}
+              grayscale, centre square crop, resize to {res}, and scaling to [0, 1]. We then extract{" "}
               <em>features</em>: the raw pixels and/or a HOG descriptor, standardised with the training-set mean and
               standard deviation.
             </p>
@@ -202,7 +205,8 @@ SGD + momentum:  v ← μ·v − η·dW,   W ← W + v          (η = learning r
               ["Epochs", "Passes over the data. Too few underfits and too many overfits, which early stopping prevents."],
               ["Optimizer", "Plain SGD, SGD with momentum (smooths the updates), or Adam (adaptive per-weight step sizes)."],
               ["Cost function", "Cross-entropy vs mean squared error on the softmax output."],
-              ["L2 penalty λ", "Weight decay. It trades training fit for generalisation."]
+              ["L2 penalty λ", "Weight decay. It trades training fit for generalisation."],
+              ["Dropout", "Randomly zeroes a fraction of hidden units on every training batch, so no unit can rely on any other single unit; disabled at inference."]
             ].map(([t, d]) => (
               <div key={t} className="card !p-5">
                 <h3 className="text-sm font-semibold">{t}</h3>
@@ -212,7 +216,66 @@ SGD + momentum:  v ← μ·v − η·dW,   W ← W + v          (η = learning r
           </div>
         </Section>
 
-        <Section title="8. Limitations of the MLP">
+        <Section title="8. Beyond hyperparameter tuning: ensembling and calibration">
+          <Prose>
+            <p>
+              Two more techniques run after the hyperparameter search, on top of the single best configuration it
+              finds. Neither one touches the network&apos;s architecture or how it is trained &mdash; they only change
+              how its predictions are combined and read.
+            </p>
+            <p>
+              <strong>Ensembling.</strong> Several networks with the identical selected hyperparameters are trained
+              from different random seeds, so each ends up in a slightly different region of weight space (different
+              initial weights, different mini-batch order). Averaging their softmax outputs cancels out some of each
+              individual model&apos;s idiosyncratic mistakes &mdash; a classic bias-variance argument: the members
+              share the same bias, but their errors are only partially correlated, so the variance of the average is
+              lower than the variance of any one member.
+              {report && (
+                <>
+                  {" "}
+                  Here, {report.final.ensemble.size} models are averaged. That raised validation macro-F1 from{" "}
+                  <strong>{pct(report.final.ensemble.members[0]?.val_f1 ?? 0)}</strong> (a single model) to{" "}
+                  <strong>{pct(report.final.ensemble.uncalibrated_validation.f1_macro)}</strong>, but it did not raise
+                  the test score: a useful reminder that a gain on validation is a hypothesis, not a guarantee.
+                </>
+              )}{" "}
+              The cost is proportional: N models means N forward passes per prediction, but each pass is a few matrix
+              multiplications, so the whole ensemble still answers in about a millisecond.
+            </p>
+            <p>
+              <strong>Class-prior calibration.</strong> A softmax classifier predicts{" "}
+              <code className="font-mono text-sm">argmax P</code>, the class with the highest probability. The
+              training set is dominated by Normal and CNV, and CNV is visually hard to separate from Drusen, so the
+              network learns a boundary that over-predicts CNV. A small post-hoc fix from the class-imbalance
+              literature, logit adjustment, searches for a per-class additive bias{" "}
+              <code className="font-mono text-sm">b</code> so the rule becomes{" "}
+              <code className="font-mono text-sm">argmax(log P + b)</code>: an over-predicted class gets a negative
+              bias, an under-predicted class a positive one. It never touches a trained weight. The bias must be tuned
+              on data whose class mix matches where the model will be used. Here that means a class-balanced sample of
+              the validation set, because the test set and a real screening deployment are balanced while the full
+              validation split is not. Tuning it on the imbalanced split instead improved validation but made the test
+              score worse.
+              {report && (
+                <>
+                  {" "}
+                  On the balanced calibration sample, macro-F1 moves from{" "}
+                  <strong>{pct(report.final.calibration.val_f1_before)}</strong> to{" "}
+                  <strong>{pct(report.final.calibration.val_f1_after)}</strong>.
+                  {report.final.ablation?.significance_vs_previous && (
+                    <>
+                      {" "}
+                      Together with dropout, it lifts Drusen recall on the test set from{" "}
+                      {pct(report.final.ablation.significance_vs_previous.drusen.recall_before)} (previous version) to{" "}
+                      {pct(report.final.ablation.significance_vs_previous.drusen.recall_after)}.
+                    </>
+                  )}
+                </>
+              )}
+            </p>
+          </Prose>
+        </Section>
+
+        <Section title="9. Limitations of the MLP">
           <Prose>
             <ul className="list-disc space-y-2 pl-5">
               <li>
@@ -223,14 +286,14 @@ SGD + momentum:  v ← μ·v − η·dW,   W ← W + v          (η = learning r
               <li>
                 <strong>Many parameters.</strong> Every input is wired to every hidden neuron: the first layer alone has
                 (input dimensions × hidden width) weights. That makes overfitting likely and limits how large an input
-                resolution is practical, which is one reason we work at 28 × 28.
+                resolution is practical, which is one reason we work at {res}.
               </li>
               <li>
                 <strong>Relies on feature engineering.</strong> Handcrafted HOG features help, but they are fixed; a CNN
                 learns its own filters.
               </li>
               <li>
-                <strong>Low resolution.</strong> At 28 × 28 pixels, fine retinal detail such as small drusen deposits is
+                <strong>Low resolution.</strong> At {res} pixels, fine retinal detail such as small drusen deposits is
                 lost. This is why Drusen is the hardest class.
               </li>
               <li>

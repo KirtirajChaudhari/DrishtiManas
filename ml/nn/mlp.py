@@ -16,6 +16,7 @@ output probabilities. Backpropagation applies the chain rule in reverse:
 
 and the optimizer uses dW, db to update the parameters.
 """
+
 from __future__ import annotations
 
 import json
@@ -46,6 +47,7 @@ class MLPConfig:
     lr_decay: float = 1.0  # multiply learning rate by this after every epoch
     early_stopping_patience: int | None = 8
     class_weights: list[float] | None = None
+    dropout: float = 0.0  # inverted dropout applied to hidden-layer activations during training only
     dtype: str = "float32"  # float32 trains ~2x faster; gradient checks use float64
     seed: int = 42
 
@@ -97,25 +99,43 @@ class MLP:
         return int(sum(p.size for p in self.params))
 
     # --------------------------------------------------------------- forward
-    def forward(self, X: np.ndarray) -> tuple[np.ndarray, list[np.ndarray], list[np.ndarray]]:
-        """Return output logits plus caches (pre-activations Z and activations A)."""
+    def forward(
+        self, X: np.ndarray, training: bool = False
+    ) -> tuple[np.ndarray, list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray | None]]:
+        """Return output logits plus caches needed by backprop.
+
+        ``activations[l]`` is what actually fed the next layer (post-dropout when
+        ``training`` and ``dropout > 0``); ``raw_activations[l]`` is the undropped
+        ``g(Z[l])``, which activation derivatives (e.g. sigmoid, tanh) must be
+        evaluated against; ``masks[l]`` is the inverted-dropout mask used to turn
+        one into the other (``None`` when dropout was inactive for that layer).
+        """
         A = X = np.asarray(X, dtype=self.dtype)
         activations = [X]
-        pre_acts = []
+        raw_activations = [X]
+        pre_acts: list[np.ndarray] = []
+        masks: list[np.ndarray | None] = [None]
         last = len(self.weights) - 1
-        for i, (W, b) in enumerate(zip(self.weights, self.biases)):
+        for i, (W, b) in enumerate(zip(self.weights, self.biases, strict=True)):
             Z = A @ W + b
             pre_acts.append(Z)
             if i == last:
-                return Z, pre_acts, activations  # logits; softmax applied in the loss
-            A = self.hidden_act.forward(Z)
+                return Z, pre_acts, activations, raw_activations, masks  # logits; softmax applied in the loss
+            g = self.hidden_act.forward(Z)
+            raw_activations.append(g)
+            mask = None
+            if training and self.config.dropout > 0:
+                keep = 1.0 - self.config.dropout
+                mask = (self.rng.random(g.shape) < keep).astype(self.dtype) / keep
+            masks.append(mask)
+            A = g if mask is None else g * mask
             activations.append(A)
         raise RuntimeError("network has no layers")
 
     def predict_proba(self, X: np.ndarray, batch_size: int = 4096) -> np.ndarray:
         out = []
         for start in range(0, X.shape[0], batch_size):
-            logits, _, _ = self.forward(X[start : start + batch_size])
+            logits, *_ = self.forward(X[start : start + batch_size])
             out.append(softmax(logits))
         return np.vstack(out)
 
@@ -123,9 +143,16 @@ class MLP:
         return self.predict_proba(X).argmax(axis=1)
 
     # -------------------------------------------------------------- backward
-    def loss_and_gradients(self, X: np.ndarray, Y: np.ndarray) -> tuple[float, list[np.ndarray], np.ndarray]:
-        """One forward + backward pass. Returns (loss, grads in `params` order, probs)."""
-        logits, pre_acts, activations = self.forward(X)
+    def loss_and_gradients(
+        self, X: np.ndarray, Y: np.ndarray, training: bool = True
+    ) -> tuple[float, list[np.ndarray], np.ndarray]:
+        """One forward + backward pass. Returns (loss, grads in `params` order, probs).
+
+        ``training=True`` (the default, used by ``fit``) activates dropout when
+        configured; ``gradient_check`` calls with ``training=False`` so the
+        numerical and analytic gradients compare a deterministic function.
+        """
+        logits, pre_acts, activations, raw_activations, masks = self.forward(X, training=training)
         data_loss, dZ, probs = self.loss_fn(logits, Y.astype(self.dtype, copy=False))
         dZ = dZ.astype(self.dtype, copy=False)
         l2 = self.config.l2
@@ -139,8 +166,12 @@ class MLP:
             dWs[layer] = A_prev.T @ dZ + l2 * self.weights[layer]
             dbs[layer] = dZ.sum(axis=0)
             if layer > 0:
-                dA_prev = dZ @ self.weights[layer].T
-                dZ = dA_prev * self.hidden_act.backward(pre_acts[layer - 1], activations[layer])
+                # Gradient wrt activations[layer] (the post-dropout output of hidden layer `layer`).
+                dA = dZ @ self.weights[layer].T
+                mask = masks[layer]
+                if mask is not None:
+                    dA = dA * mask  # backprop through the dropout multiply
+                dZ = dA * self.hidden_act.backward(pre_acts[layer - 1], raw_activations[layer])
         return data_loss + reg_loss, [*dWs, *dbs], probs
 
     # ------------------------------------------------------------------- fit
@@ -239,24 +270,50 @@ class MLP:
         return model
 
 
-def gradient_check(model: MLP, X: np.ndarray, y: np.ndarray, num_checks: int = 30, eps: float = 1e-5) -> float:
+def gradient_check(
+    model: MLP,
+    X: np.ndarray,
+    y: np.ndarray,
+    num_checks: int = 30,
+    eps: float = 1e-5,
+    dropout_seed: int | None = None,
+) -> float:
     """Compare backprop gradients to centred finite differences.
 
     Returns the maximum relative error over randomly sampled parameters; values
     around 1e-7 or smaller mean the analytic gradients are correct.
+
+    ``dropout_seed``, if given, resets ``model.rng`` to that seed before every
+    forward pass so a config with ``dropout > 0`` still sees an identical mask
+    on every evaluation (the mask depends only on shapes, never on the
+    parameter being perturbed) -- this lets the check validate the dropout
+    backward pass too. When ``None`` (the default), the check runs with
+    ``training=False`` so dropout is inactive and the comparison is exact
+    regardless of configuration.
     """
     Y = one_hot(y, model.config.num_classes)
-    _, grads, _ = model.loss_and_gradients(X, Y)
+    training = dropout_seed is not None
+
+    def loss_at() -> float:
+        if dropout_seed is not None:
+            model.rng = np.random.default_rng(dropout_seed)
+        loss, _, _ = model.loss_and_gradients(X, Y, training=training)
+        return loss
+
+    if dropout_seed is not None:
+        model.rng = np.random.default_rng(dropout_seed)
+    _, grads, _ = model.loss_and_gradients(X, Y, training=training)
+
     rng = np.random.default_rng(0)
     worst = 0.0
-    for p, g in zip(model.params, grads):
+    for p, g in zip(model.params, grads, strict=True):
         for _ in range(max(1, num_checks // len(model.params))):
             idx = tuple(rng.integers(0, s) for s in p.shape)
             old = p[idx]
             p[idx] = old + eps
-            plus, _, _ = model.loss_and_gradients(X, Y)
+            plus = loss_at()
             p[idx] = old - eps
-            minus, _, _ = model.loss_and_gradients(X, Y)
+            minus = loss_at()
             p[idx] = old
             numeric = (plus - minus) / (2 * eps)
             analytic = g[idx]

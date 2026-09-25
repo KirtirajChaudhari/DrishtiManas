@@ -76,6 +76,7 @@ export interface MLPConfig {
   lr_decay: number;
   early_stopping_patience: number | null;
   class_weights: number[] | null;
+  dropout: number;
 }
 
 export interface TuningRun {
@@ -96,16 +97,26 @@ export interface TuningRun {
 export interface SelectionRun {
   name: string;
   val_f1: number;
-  val_acc: number;
+  val_acc: number | null;
   config: MLPConfig;
 }
 
 export interface TuningExperiment {
   key: string;
   title: string;
+  incumbent?: number | string;
   best?: number | string;
   runs: TuningRun[] | SelectionRun[];
   history?: EpochStats[];
+}
+
+export interface AblationRow {
+  step: string;
+  val_acc: number;
+  val_f1: number;
+  test_acc: number;
+  test_f1: number;
+  test_per_class_f1: Record<string, number>;
 }
 
 export interface Baseline {
@@ -136,6 +147,7 @@ export interface ModelReport {
   preprocessing: string[];
   features: {
     selected: string;
+    spec: { kind: string; image_size: number; pixel_size: number; hog_cells: number[] };
     dim: number;
     comparison: (TuningRun & { dim: number })[];
   };
@@ -150,7 +162,40 @@ export interface ModelReport {
     best_epoch: number;
     training_seconds: number;
     history: EpochStats[];
-    regimes: { regime: string; val_f1: number }[];
+    regimes: { regime: string; val_f1: number; val_acc: number; epochs: number }[];
+    ensemble: {
+      size: number;
+      members: { seed: number; val_acc: number; val_f1: number }[];
+      total_parameters: number;
+      uncalibrated_validation: EvalReport;
+    };
+    calibration: {
+      method: string;
+      bias: number[];
+      calibration_set_size?: number;
+      val_f1_before: number;
+      val_f1_after: number;
+      full_validation_f1_before?: number;
+      full_validation_f1_after?: number;
+    };
+    ablation?: {
+      rows: AblationRow[];
+      previous_version?: AblationRow;
+      significance_vs_previous?: {
+        test: string;
+        overall: { prev_right_new_wrong: number; prev_wrong_new_right: number; p_value: number };
+        drusen: {
+          prev_right_new_wrong: number;
+          prev_wrong_new_right: number;
+          p_value: number;
+          recall_before: number;
+          recall_after: number;
+        };
+        accuracy_standard_error: number;
+      };
+      latency_ms_median?: number;
+      latency_ms_p95?: number;
+    };
     validation: EvalReport;
     test: EvalReport;
   };
