@@ -1,21 +1,21 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 import App from "./App";
+import ClassifyPage from "./pages/Classify";
+import LearnPage from "./pages/Learn";
+import ReportPage from "./pages/Report";
 import "./index.css";
-
-import DoctorDashboard from "./pages/DoctorDashboard";
-import TechnicianUpload from "./pages/TechnicianUpload";
 
 const router = createBrowserRouter([
   {
     path: "/",
     element: <App />,
     children: [
-      { index: true, element: <Navigate to="/technician" replace /> },
-      { path: "technician", element: <TechnicianUpload /> },
-      { path: "doctor", element: <DoctorDashboard /> }
+      { index: true, element: <ClassifyPage /> },
+      { path: "model", element: <ReportPage /> },
+      { path: "learn", element: <LearnPage /> }
     ]
   }
 ]);

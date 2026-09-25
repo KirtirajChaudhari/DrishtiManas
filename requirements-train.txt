@@ -1,0 +1,6 @@
+# Training, evaluation and testing (python -m ml.train, pytest)
+-r requirements.txt
+scikit-learn>=1.4   # baselines + metric cross-checks only; the network itself is pure NumPy
+matplotlib>=3.8     # report figures
+pytest>=8.0
+httpx>=0.27
