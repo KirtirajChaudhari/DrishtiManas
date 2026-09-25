@@ -12,5 +12,11 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 900
+  },
+  // Pre-bundle these at server start instead of discovering them on the first
+  // page load, which otherwise forces a "new dependencies optimized, reloading"
+  // mid-load reload every time the dev server starts cold.
+  optimizeDeps: {
+    include: ["react", "react-dom", "react-dom/client", "react-router-dom", "recharts", "clsx", "lucide-react"]
   }
 });
