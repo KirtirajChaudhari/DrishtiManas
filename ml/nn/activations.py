@@ -9,6 +9,7 @@ Both the pre-activation ``z`` and the activation ``a`` are passed to
 ``backward`` because some derivatives are cheapest to express in terms of the
 output (sigmoid: a * (1 - a), tanh: 1 - a**2).
 """
+
 from __future__ import annotations
 
 import numpy as np

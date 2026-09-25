@@ -12,8 +12,9 @@ node_modules/
 frontend/dist/
 *.tsbuildinfo
 
-# Data (downloaded by ml/data.py; never committed)
+# Data (downloaded by ml/data.py; never committed) and smoke-test output
 data/
+artifacts-quick/
 
 # Environment / secrets
 .env

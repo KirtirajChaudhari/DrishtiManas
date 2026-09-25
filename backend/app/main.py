@@ -10,6 +10,7 @@ Endpoints
 If the React build exists (frontend/dist) it is served from "/", so a single
 container hosts the whole application.
 """
+
 from __future__ import annotations
 
 import json
@@ -100,7 +101,9 @@ def sample_file(name: str) -> FileResponse:
 
 
 @app.post("/api/predict", tags=["model"])
-async def predict(file: UploadFile = File(..., description="Retinal OCT image (PNG / JPEG / BMP / TIFF / WebP)")) -> dict:
+async def predict(
+    file: UploadFile = File(..., description="Retinal OCT image (PNG / JPEG / BMP / TIFF / WebP)"),
+) -> dict:
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if not data:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")

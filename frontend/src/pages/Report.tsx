@@ -11,6 +11,7 @@ const TOC = [
   ["results", "Results"],
   ["architecture", "Architecture"],
   ["training", "Training & convergence"],
+  ["ensemble", "Ensemble & ablation"],
   ["evaluation", "Evaluation"],
   ["baselines", "Baselines"],
   ["tuning", "Hyperparameter tuning"],
@@ -55,6 +56,7 @@ function ConfigTable({ cfg, extra }: { cfg: MLPConfig; extra?: [string, string][
     ["Optimizer", OPTIMIZER_LABEL[cfg.optimizer] ?? cfg.optimizer],
     ["Learning rate", `${cfg.learning_rate}${cfg.lr_decay !== 1 ? ` (×${cfg.lr_decay}/epoch)` : ""}`],
     ["Batch size", String(cfg.batch_size)],
+    ["Dropout (hidden layers)", cfg.dropout > 0 ? pct(cfg.dropout, 0) : "none"],
     ["L2 regularisation λ", String(cfg.l2)],
     ["Max epochs / early stopping", `${cfg.epochs} / patience ${cfg.early_stopping_patience ?? "off"}`],
     ["Class weights", cfg.class_weights ? cfg.class_weights.map((w) => w.toFixed(2)).join(", ") : "none (balanced data)"],
@@ -125,7 +127,7 @@ function TuningPanel({ exp, baseValue }: { exp: TuningExperiment; baseValue?: st
           <span className={clsx("font-mono", String(r.value) === String(exp.best) && "font-semibold text-brand-700 dark:text-brand-400")}>
             {r.label}
             {String(r.value) === String(exp.best) ? " ★" : ""}
-            {baseValue !== undefined && String(r.value) === baseValue ? " (base)" : ""}
+            {baseValue !== undefined && String(r.value) === baseValue ? " (start)" : ""}
           </span>,
           pct(r.val_acc),
           pct(r.val_f1 ?? 0),
@@ -139,35 +141,11 @@ function TuningPanel({ exp, baseValue }: { exp: TuningExperiment; baseValue?: st
   );
 }
 
-function baseValueFor(key: string, cfg: MLPConfig): string | undefined {
-  switch (key) {
-    case "learning_rate":
-      return String(cfg.learning_rate);
-    case "hidden_neurons":
-      return String(cfg.hidden_layers[0]);
-    case "hidden_layers":
-      return String(cfg.hidden_layers.length);
-    case "batch_size":
-      return String(cfg.batch_size);
-    case "activation":
-      return cfg.activation;
-    case "optimizer":
-      return cfg.optimizer;
-    case "loss":
-      return cfg.loss;
-    case "l2":
-      return String(cfg.l2);
-    default:
-      return undefined;
-  }
-}
-
 function Tuning({ report }: { report: ModelReport }) {
   const exps = report.tuning.experiments.filter((e) => e.key !== "selection");
   const selection = report.tuning.experiments.find((e) => e.key === "selection");
   const [active, setActive] = useState(exps[0]?.key);
   const exp = exps.find((e) => e.key === active) ?? exps[0];
-  const base = report.tuning.base_config;
 
   return (
     <div className="space-y-6">
@@ -190,15 +168,15 @@ function Tuning({ report }: { report: ModelReport }) {
             </button>
           ))}
         </div>
-        <TuningPanel exp={exp} baseValue={baseValueFor(exp.key, base)} />
+        <TuningPanel exp={exp} baseValue={exp.incumbent !== undefined ? String(exp.incumbent) : undefined} />
       </div>
 
       {selection && (
         <div className="card">
           <h3 className="font-semibold">Best model selected</h3>
           <p className="mt-1 text-sm muted">
-            The best value of each hyperparameter was combined and compared with the base configuration on the validation
-            set. The winner, ranked by macro-F1, was then retrained on the full training data.
+            The configuration found by the greedy search is compared with the original base configuration on the
+            validation set. The winner, ranked by macro-F1, goes on to final training.
           </p>
           <div className="mt-4">
             <Table
@@ -214,7 +192,7 @@ function Tuning({ report }: { report: ModelReport }) {
                 `${OPTIMIZER_LABEL[r.config.optimizer]} / ${r.config.learning_rate}`,
                 String(r.config.batch_size),
                 String(r.config.l2),
-                pct(r.val_acc),
+                r.val_acc === null ? "–" : pct(r.val_acc),
                 pct(r.val_f1)
               ])}
             />
@@ -296,6 +274,31 @@ export default function ReportPage() {
               <TrainingCurve history={final.history} metric="acc" />
             </div>
           </div>
+          {final.regimes.length > 1 && (
+            <div className="card mt-6">
+              <h3 className="text-sm font-semibold">Final training candidates</h3>
+              <p className="mt-1 text-xs muted">
+                The selected hyperparameters retrained on the full-size data: class-balanced undersampling vs all 97k
+                images with a class-weighted loss, each at the tuned learning rate and at one third of it. Selected by
+                validation macro-F1.
+              </p>
+              <div className="mt-3">
+                <Table
+                  head={["Candidate", "Epochs", "Val. accuracy", "Val. macro-F1"]}
+                  align={["left", "right", "right", "right"]}
+                  rows={final.regimes.map((r, i) => [
+                    <span className={clsx("font-mono text-[13px]", i === 0 && "font-semibold text-brand-700 dark:text-brand-400")}>
+                      {r.regime}
+                      {i === 0 ? " ★" : ""}
+                    </span>,
+                    String(r.epochs ?? "–"),
+                    r.val_acc === undefined ? "–" : pct(r.val_acc),
+                    pct(r.val_f1)
+                  ])}
+                />
+              </div>
+            </div>
+          )}
           <div className="mt-6 grid gap-4 sm:grid-cols-3">
             <Stat
               label="Gradient check"
@@ -312,6 +315,125 @@ export default function ReportPage() {
               value={`${fixed(final.history[0].grad_norm, 2)} → ${fixed(final.history[final.history.length - 1].grad_norm, 2)}`}
               hint="Mean mini-batch ‖∇J‖, first → last epoch"
             />
+          </div>
+        </Section>
+
+        <Section
+          id="ensemble"
+          title="Ensemble, calibration and what each step contributed"
+          subtitle="Two post-hoc steps applied after hyperparameter tuning. Both were chosen on validation data; the table at the bottom shows, for honesty, whether each one also helped on the test set."
+        >
+          <div className="space-y-6">
+            <div className="card">
+              <h3 className="text-sm font-semibold">Ensemble</h3>
+              <p className="mt-1 text-sm muted">
+                {final.ensemble.size} models with the selected hyperparameters, differing only in random seed (weight
+                initialisation and mini-batch shuffling), are trained independently, and every prediction averages their
+                softmax outputs. Averaging reduces variance when the members&apos; mistakes are only partly correlated.
+                Here it raised validation macro-F1 from {pct(final.ensemble.members[0]?.val_f1 ?? 0)} to{" "}
+                {pct(final.ensemble.uncalibrated_validation.f1_macro)}, but did not improve the test score (see the
+                table below).
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <Stat label="Ensemble size" value={String(final.ensemble.size)} />
+                <Stat label="Total parameters" value={num(final.ensemble.total_parameters)} hint={`${num(final.parameters)} per model`} />
+                <Stat label="Single model (seed 42)" value={pct(final.ensemble.members[0]?.val_f1 ?? 0)} hint="Validation macro-F1" />
+                <Stat
+                  label="Ensemble average"
+                  value={pct(final.ensemble.uncalibrated_validation.f1_macro)}
+                  hint="Validation macro-F1, uncalibrated"
+                />
+              </div>
+              <div className="mt-4">
+                <Table
+                  head={["Model", "Seed", "Val. accuracy", "Val. macro-F1"]}
+                  align={["left", "right", "right", "right"]}
+                  rows={final.ensemble.members.map((m, i) => [`Member ${i + 1}`, String(m.seed), pct(m.val_acc), pct(m.val_f1)])}
+                />
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 className="text-sm font-semibold">Class-prior calibration (logit adjustment)</h3>
+              <p className="mt-1 text-sm muted">
+                The network over-predicts CNV, the class that dominates training and is hardest to separate from Drusen.
+                A per-class additive bias <code className="font-mono text-xs">b</code> changes the decision rule from{" "}
+                <code className="font-mono text-xs">argmax(p)</code> to <code className="font-mono text-xs">argmax(log p + b)</code>.
+                It never touches the trained weights; it only shifts each class&apos;s effective threshold. The bias is
+                found by coordinate ascent on a class-balanced subsample of the validation set
+                {final.calibration.calibration_set_size ? ` (${num(final.calibration.calibration_set_size)} images)` : ""},
+                because the test set, like any real deployment, is balanced while the full validation split is not.
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                {report.dataset.classes.map((c, i) => (
+                  <Stat key={c.code} label={c.code} value={final.calibration.bias[i]?.toFixed(2) ?? "0.00"} hint="log-bias" />
+                ))}
+              </div>
+              <p className="mt-4 text-sm">
+                Macro-F1 on the balanced calibration subsample:{" "}
+                <span className="font-mono">{pct(final.calibration.val_f1_before)}</span> →{" "}
+                <span className="font-mono font-semibold text-brand-700 dark:text-brand-400">{pct(final.calibration.val_f1_after)}</span>.
+                {final.calibration.full_validation_f1_before !== undefined && final.calibration.full_validation_f1_after !== undefined && (
+                  <>
+                    {" "}
+                    On the full (imbalanced) validation split it moves {pct(final.calibration.full_validation_f1_before)} →{" "}
+                    {pct(final.calibration.full_validation_f1_after)}: it deliberately trades a little performance on the
+                    majority classes for recall on Drusen.
+                  </>
+                )}
+              </p>
+            </div>
+
+            {final.ablation && (
+              <div className="card">
+                <h3 className="text-sm font-semibold">What each step contributed</h3>
+                <p className="mt-1 text-sm muted">
+                  Reported after all choices were made on validation. The test set has only 1,000 images, so differences of
+                  one or two points are within noise
+                  {final.ablation.significance_vs_previous
+                    ? ` (standard error of accuracy ≈ ±${(final.ablation.significance_vs_previous.accuracy_standard_error * 100).toFixed(1)} points)`
+                    : ""}
+                  .
+                </p>
+                <div className="mt-4">
+                  <Table
+                    head={["Step", "Val. macro-F1", "Test accuracy", "Test macro-F1", "Test Drusen F1"]}
+                    align={["left", "right", "right", "right", "right"]}
+                    rows={[
+                      ...(final.ablation.previous_version ? [final.ablation.previous_version] : []),
+                      ...final.ablation.rows
+                    ].map((r, i, all) => [
+                      <span className={clsx(i === all.length - 1 && "font-semibold text-brand-700 dark:text-brand-400")}>
+                        {r.step}
+                        {i === all.length - 1 ? " ★" : ""}
+                      </span>,
+                      pct(r.val_f1),
+                      pct(r.test_acc),
+                      pct(r.test_f1),
+                      pct(r.test_per_class_f1.DRUSEN ?? 0)
+                    ])}
+                  />
+                </div>
+                {final.ablation.significance_vs_previous && (
+                  <p className="mt-4 text-sm leading-relaxed">
+                    <strong>Is the improvement real?</strong> A paired McNemar test on the same test images compares the
+                    served model with the previous version. The overall accuracy gain is <strong>not</strong> statistically
+                    significant (p = {final.ablation.significance_vs_previous.overall.p_value.toFixed(2)}). The gain on
+                    Drusen is: recall rose from {pct(final.ablation.significance_vs_previous.drusen.recall_before)} to{" "}
+                    {pct(final.ablation.significance_vs_previous.drusen.recall_after)} (
+                    {final.ablation.significance_vs_previous.drusen.prev_wrong_new_right} Drusen scans newly correct vs{" "}
+                    {final.ablation.significance_vs_previous.drusen.prev_right_new_wrong} newly wrong, p &lt; 0.0001).
+                  </p>
+                )}
+                {final.ablation.latency_ms_median !== undefined && (
+                  <p className="mt-2 text-xs muted">
+                    Measured latency of the full served path (decode, preprocess, features, {final.ensemble.size} models,
+                    calibration): median {final.ablation.latency_ms_median.toFixed(1)} ms, 95th percentile{" "}
+                    {(final.ablation.latency_ms_p95 ?? 0).toFixed(1)} ms on one CPU core.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </Section>
 
@@ -364,7 +486,7 @@ export default function ReportPage() {
         <Section
           id="tuning"
           title="Hyperparameter tuning"
-          subtitle={`One factor at a time. Each hyperparameter was varied around the base configuration while the others stayed fixed, training on a balanced subset of ${num(report.dataset.tuning_subset_per_class * 4)} images and scoring on the validation split.`}
+          subtitle={`Greedy coordinate search. The hyperparameters are tuned one at a time, in the order of the tabs. Each experiment starts from the best configuration found so far ("start"), and a new value is adopted (★) only if it raises validation macro-F1 by at least 0.5 points. Every run trains on a class-balanced subset of ${num(report.dataset.tuning_subset_per_class * 4)} images and is scored on the validation split.`}
         >
           <Tuning report={report} />
         </Section>
@@ -408,9 +530,9 @@ export default function ReportPage() {
                   head={["Features", "Dimensions", "Val. accuracy", "Val. macro-F1"]}
                   align={["left", "right", "right", "right"]}
                   rows={report.features.comparison.map((f) => [
-                    <span className={clsx("font-mono", f.value === report.features.selected && "font-semibold text-brand-700 dark:text-brand-400")}>
+                    <span className={clsx(f.label === report.features.selected && "font-semibold text-brand-700 dark:text-brand-400")}>
                       {f.label}
-                      {f.value === report.features.selected ? " ★" : ""}
+                      {f.label === report.features.selected ? " ★" : ""}
                     </span>,
                     num(f.dim),
                     pct(f.val_acc),
@@ -419,8 +541,8 @@ export default function ReportPage() {
                 />
               </div>
               <p className="mt-3 text-xs muted">
-                Pixels = the 784 raw intensities. HOG = histograms of oriented gradients (4×4-pixel cells, 9 orientation
-                bins, 2×2-cell blocks with L2-Hys normalisation), which capture retinal layer edges and contours.
+                Pixels = raw grayscale intensities. HOG = histograms of oriented gradients (9 orientation bins per cell,
+                2×2-cell blocks with L2-Hys normalisation), which capture the edges and contours of the retinal layers.
               </p>
             </div>
           </div>

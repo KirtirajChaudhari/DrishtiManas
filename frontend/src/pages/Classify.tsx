@@ -9,7 +9,31 @@ import { api, type PredictionResponse, type Sample } from "../lib/api";
 import { pct } from "../lib/format";
 
 const ACCEPT = "image/png,image/jpeg,image/bmp,image/tiff,image/webp,image/gif";
-const MAX_MB = 8;
+const MAX_MB = 25; // largest file accepted from the user
+// Uploads above this are downscaled in the browser first. Serverless hosts cap request bodies
+// (Vercel at about 4.5 MB), and the model only ever uses a 64x64 centre crop, so nothing is lost.
+const UPLOAD_LIMIT_MB = 4;
+const MAX_UPLOAD_SIDE = 1024;
+
+/** Return `file` unchanged if it is small enough, otherwise a downscaled JPEG re-encode. */
+async function shrinkForUpload(file: Blob): Promise<Blob> {
+  if (file.size <= UPLOAD_LIMIT_MB * 1024 * 1024) return file;
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    throw new Error(`This browser cannot resize that image, and it is over ${UPLOAD_LIMIT_MB} MB. Please use a smaller PNG or JPEG.`);
+  }
+  const scale = Math.min(1, MAX_UPLOAD_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not re-encode the image."))), "image/jpeg", 0.92)
+  );
+}
 
 function PixelCanvas({ pixels, size = 168 }: { pixels: number[][]; size?: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -37,7 +61,7 @@ function PixelCanvas({ pixels, size = 168 }: { pixels: number[][]; size?: number
       className="pixelated rounded-lg ring-1 ring-stone-200 dark:ring-stone-700"
       style={{ width: size, height: size }}
       role="img"
-      aria-label="28 by 28 pixel grayscale input the network receives"
+      aria-label={`${pixels.length} by ${pixels.length} pixel grayscale input the network receives`}
     />
   );
 }
@@ -69,7 +93,14 @@ function ProbabilityBars({ result }: { result: PredictionResponse }) {
   );
 }
 
-const STEPS = ["Upload", "Grayscale + crop", "Resize 28×28", "Features", "MLP forward pass", "Softmax"];
+const steps = (size: number) => [
+  "Upload",
+  "Grayscale + centre crop",
+  `Resize to ${size}×${size}`,
+  "Feature extraction (pixels + HOG)",
+  "MLP forward pass",
+  "Softmax probabilities"
+];
 
 export default function ClassifyPage() {
   const { report } = useReport();
@@ -102,7 +133,8 @@ export default function ClassifyPage() {
     // On narrow screens the result card sits below the inputs; bring it into view.
     if (window.innerWidth < 1024) outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     try {
-      setResult(await api.predict(blob, name));
+      const upload = await shrinkForUpload(blob);
+      setResult(await api.predict(upload, upload === blob ? name : name.replace(/\.[^.]+$/, "") + ".jpg"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Prediction failed");
     } finally {
@@ -210,7 +242,9 @@ export default function ClassifyPage() {
                 </button>
               )}
             </div>
-            <p className="mt-3 text-xs muted">PNG, JPEG, BMP, TIFF or WebP · up to {MAX_MB} MB</p>
+            <p className="mt-3 text-xs muted">
+              PNG, JPEG, BMP, TIFF or WebP · up to {MAX_MB} MB (images over {UPLOAD_LIMIT_MB} MB are downscaled before upload)
+            </p>
             <input
               ref={inputRef}
               type="file"
@@ -261,7 +295,7 @@ export default function ClassifyPage() {
             <div className="flex h-full flex-col justify-center">
               <p className="eyebrow">How a prediction is made</p>
               <ol className="mt-4 space-y-3">
-                {STEPS.map((s, i) => (
+                {steps(report?.dataset.image_shape[0] ?? 64).map((s, i) => (
                   <li key={s} className="flex items-center gap-3 text-sm">
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-stone-100 font-mono text-xs dark:bg-stone-800">
                       {i + 1}
@@ -322,7 +356,7 @@ export default function ClassifyPage() {
                 <figure className="flex flex-col items-center">
                   <PixelCanvas pixels={result.input_pixels} />
                   <figcaption className="mt-2 max-w-[168px] text-center text-xs muted">
-                    What the network sees: 28 × 28 grayscale, from a {result.image_size[0]} × {result.image_size[1]} upload
+                    What the network sees: {result.input_pixels.length} × {result.input_pixels.length} grayscale, from a {result.image_size[0]} × {result.image_size[1]} upload
                   </figcaption>
                 </figure>
                 <div>

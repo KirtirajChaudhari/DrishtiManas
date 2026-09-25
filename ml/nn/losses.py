@@ -5,6 +5,7 @@ probabilities ``p``. Each loss returns the scalar cost *and* the gradient of
 that cost with respect to the logits (dJ/dz), which is where backpropagation
 starts.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -38,7 +39,11 @@ class CrossEntropyLoss:
     def __call__(self, logits: np.ndarray, y_onehot: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
         n = logits.shape[0]
         probs = softmax(logits)
-        sample_w = np.ones(n, dtype=logits.dtype) if self.class_weights is None else (y_onehot @ self.class_weights).astype(logits.dtype)
+        sample_w = (
+            np.ones(n, dtype=logits.dtype)
+            if self.class_weights is None
+            else (y_onehot @ self.class_weights).astype(logits.dtype)
+        )
         per_sample = -np.sum(y_onehot * np.log(probs + EPS), axis=1)
         loss = float(np.sum(sample_w * per_sample) / n)
         grad = (probs - y_onehot) * sample_w[:, None] / n
@@ -63,7 +68,11 @@ class MSELoss:
     def __call__(self, logits, y_onehot):
         n = logits.shape[0]
         probs = softmax(logits)
-        sample_w = np.ones(n, dtype=logits.dtype) if self.class_weights is None else (y_onehot @ self.class_weights).astype(logits.dtype)
+        sample_w = (
+            np.ones(n, dtype=logits.dtype)
+            if self.class_weights is None
+            else (y_onehot @ self.class_weights).astype(logits.dtype)
+        )
         diff = probs - y_onehot
         loss = float(np.sum(sample_w * np.sum(diff**2, axis=1)) / n)
         dp = 2.0 * diff * sample_w[:, None] / n

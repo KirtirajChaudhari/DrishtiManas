@@ -1,7 +1,7 @@
 # Deploying DrishtiManas
 
 The whole application (React UI and FastAPI inference API) ships as **one Docker image**. Inference needs only
-NumPy and Pillow, so the container is small (~200 MB), cold-starts in about a second and fits comfortably in the free
+NumPy and Pillow, so the container is small (under 300 MB: a slim Python base plus about 130 MB of dependencies), cold-starts in about a second and fits comfortably in the free
 tiers below.
 
 | Platform | Role | Config file |
@@ -87,17 +87,58 @@ The health check path is `/api/health`.
 
 ## 3. Vercel
 
-`vercel.json` builds the React app into `frontend/dist` (served from the CDN) and deploys `api/index.py` as a Python
-serverless function that handles every `/api/*` route. The function bundles `ml/`, `backend/` and `artifacts/`.
+**Yes, Vercel can host the whole app, model included.** The "ML model" is not a heavy framework. Inference is plain
+NumPy matrix multiplication on a 7.7 MB weights file, so the backend is an ordinary FastAPI app as far as Vercel is
+concerned.
+
+How it deploys:
+
+- The React app is built into `frontend/dist` and served from Vercel's CDN.
+- `api/index.py` becomes one Python serverless function that handles every `/api/*` route (predict, report, samples).
+  It bundles `ml/`, `backend/` and `artifacts/` (the model), per `includeFiles` in `vercel.json`.
+- `"framework": null` tells Vercel to use the "Other" preset. Without it, Vercel may detect `requirements.txt` +
+  FastAPI and treat the repo as a pure FastAPI project, skipping the frontend build.
+- `.python-version` pins Python 3.12. `.vercelignore` keeps the 360 MB training data, docs, tests and figures out of
+  the upload.
+
+Verified locally by building the same bundle and running it on Python 3.12:
+
+| Check | Result |
+| --- | --- |
+| Function bundle size (dependencies + code + model) | 139 MB (NumPy and Pillow are most of it; the model is 7.7 MB) |
+| Cold import of `api/index.py` | 0.4 s |
+| `/api/health`, `/api/model`, `/api/samples/*`, `/api/predict` | all return 200 with correct results |
+| Prediction latency (3-model ensemble) | about 1–5 ms |
+
+Limits to be aware of (from Vercel's platform limits; check vercel.com/docs/functions/limitations if in doubt):
+
+- **Function size:** Vercel caps the function bundle (250 MB for most runtimes). At 139 MB we are well inside it.
+- **Request body:** Vercel caps function request bodies at about 4.5 MB. The web UI downscales any image over 4 MB in
+  the browser before uploading. An 8 MB test image went out as 0.16 MB and was still classified correctly, and the
+  model only uses a 64×64 crop, so nothing is lost. Direct API clients (e.g. `curl`) must keep uploads under 4.5 MB
+  on Vercel.
+- **Cold starts:** the first request after a period of inactivity loads NumPy and the model, which takes about a
+  second. Later requests are warm.
+
+Deploy from the dashboard (easiest):
+
+1. Push the repo to GitHub.
+2. In Vercel, choose **Add New → Project → Import** the `DrishtiManas` repository.
+3. Leave **Root Directory** as the repository root. `vercel.json` supplies the build settings. Don't change the
+   framework preset.
+4. Click **Deploy**. When it finishes, open `https://<project>.vercel.app/api/health`, which should return
+   `"loaded": true`.
+
+Or with the CLI:
 
 ```bash
 npm i -g vercel
-vercel          # first run links the project; accept the detected settings
+vercel          # first run links the project; accept the settings from vercel.json
 vercel --prod
 ```
 
-To deploy from the dashboard instead: **Add New → Project → Import** the GitHub repo. Keep the root directory as the
-repository root; `vercel.json` supplies the build settings.
+**Vercel does not replace Google Cloud for the assignment.** The brief asks for deployment on Google Cloud, so keep
+the Cloud Run deployment (section 1) as the one you report. A Vercel URL is a fine extra.
 
 ---
 

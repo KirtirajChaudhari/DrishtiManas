@@ -1,4 +1,5 @@
 """API tests against the committed model artifacts."""
+
 import io
 
 import numpy as np
@@ -44,7 +45,8 @@ def test_predict_sample_image_returns_distribution():
     assert len(probs) == 4
     assert sum(probs) == pytest.approx(1.0, abs=1e-4)
     assert body["prediction"]["code"] in {"CNV", "DME", "DRUSEN", "NORMAL"}
-    assert len(body["input_pixels"]) == 28
+    size = client.get("/api/model").json()["dataset"]["image_shape"][0]
+    assert len(body["input_pixels"]) == size
 
 
 def test_colour_image_triggers_warning():
@@ -61,5 +63,12 @@ def test_rejects_non_image_and_empty_uploads():
 
 
 def test_unknown_sample_is_404():
-    assert client.get("/api/samples/../../etc/passwd").status_code == 404
     assert client.get("/api/samples/nope.png").status_code == 404
+    assert client.get("/api/samples/..%2F..%2Fetc%2Fpasswd").status_code == 404
+
+
+def test_path_traversal_never_leaks_files():
+    # The client normalises ".." away; whatever route answers must not serve files outside the app.
+    for path in ("/api/samples/../../etc/passwd", "/../../etc/passwd", "/assets/..%2F..%2Fetc%2Fpasswd"):
+        res = client.get(path)
+        assert "root:" not in res.text
