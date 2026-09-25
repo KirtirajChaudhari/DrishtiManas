@@ -100,6 +100,9 @@ How it deploys:
   FastAPI and treat the repo as a pure FastAPI project, skipping the frontend build.
 - `.python-version` pins Python 3.12. `.vercelignore` keeps the 360 MB training data, docs, tests and figures out of
   the upload.
+- Vercel's Python function build resolves dependencies with `uv`, which requires a `[project]` table in
+  `pyproject.toml` (not just `requirements.txt`). `pyproject.toml` mirrors `requirements.txt`'s dependencies for this,
+  and `uv.lock` is committed so the build doesn't need to re-resolve them.
 
 Verified locally by building the same bundle and running it on Python 3.12:
 
