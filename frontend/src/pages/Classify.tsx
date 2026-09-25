@@ -81,6 +81,7 @@ export default function ClassifyPage() {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const outputRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api.samples().then(setSamples).catch(() => setSamples([]));
@@ -98,6 +99,8 @@ export default function ClassifyPage() {
       return;
     }
     setBusy(true);
+    // On narrow screens the result card sits below the inputs; bring it into view.
+    if (window.innerWidth < 1024) outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     try {
       setResult(await api.predict(blob, name));
     } catch (err) {
@@ -251,7 +254,7 @@ export default function ClassifyPage() {
         </div>
 
         {/* ------------------------------------------------------------ output */}
-        <div className="card min-h-[320px]" aria-live="polite">
+        <div ref={outputRef} className="card min-h-[320px] scroll-mt-28" aria-live="polite">
           {busy && <Spinner label="Running the network…" />}
           {error && <ErrorBox message={error} />}
           {!busy && !error && !result && (

@@ -68,7 +68,7 @@ export function TrainingCurve({
         <XAxis dataKey="epoch" {...axisProps} label={{ value: "Epoch", position: "insideBottom", offset: -2, fill: t.axis, fontSize: 12 }} height={36} />
         <YAxis {...axisProps} width={52} tickFormatter={fmt} domain={metric === "acc" ? ["auto", "auto"] : [0, "auto"]} />
         <Tooltip {...tooltipProps} formatter={(v: number) => fmt(v)} labelFormatter={(e) => `Epoch ${e}`} />
-        <Legend wrapperStyle={{ fontSize: 12, color: t.axis }} />
+        <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12, color: t.axis }} />
         <Line type="monotone" dataKey={`train_${metric}`} name="Training" stroke={t.series[0]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
         <Line type="monotone" dataKey={`val_${metric}`} name="Validation" stroke={t.series[1]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
       </LineChart>
@@ -95,7 +95,7 @@ export function RunsLossChart({ runs, height = 260 }: { runs: TuningRun[]; heigh
         <XAxis dataKey="epoch" {...axisProps} height={36} label={{ value: "Epoch", position: "insideBottom", offset: -2, fill: t.axis, fontSize: 12 }} />
         <YAxis {...axisProps} width={52} tickFormatter={(v: number) => v.toFixed(2)} domain={[0, "auto"]} />
         <Tooltip {...tooltipProps} formatter={(v: number) => v.toFixed(4)} labelFormatter={(e) => `Epoch ${e}`} />
-        <Legend wrapperStyle={{ fontSize: 12 }} />
+        <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12 }} />
         {runs.map((r, i) => (
           <Line
             key={r.label}
@@ -124,7 +124,7 @@ export function RunsAccuracyBars({ runs, height = 260 }: { runs: TuningRun[]; he
         <XAxis dataKey="label" {...axisProps} interval={0} height={36} />
         <YAxis {...axisProps} width={52} domain={[floor, 1]} tickFormatter={(v: number) => pct(v, 0)} />
         <Tooltip {...tooltipProps} cursor={{ fill: t.grid, opacity: 0.4 }} formatter={(v: number) => pct(v, 2)} />
-        <Legend wrapperStyle={{ fontSize: 12 }} />
+        <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12 }} />
         <Bar dataKey="train_acc" name="Training accuracy" fill={t.series[0]} radius={[4, 4, 0, 0]} maxBarSize={36} />
         <Bar dataKey="val_acc" name="Validation accuracy" fill={t.series[1]} radius={[4, 4, 0, 0]} maxBarSize={36} />
       </BarChart>
@@ -153,7 +153,7 @@ export function FunctionPlot({
         <XAxis dataKey="z" type="number" domain={[-4, 4]} ticks={[-4, -2, 0, 2, 4]} {...axisProps} />
         <YAxis {...axisProps} width={44} tickFormatter={(v: number) => v.toFixed(1)} />
         <Tooltip {...tooltipProps} formatter={(v: number) => v.toFixed(3)} labelFormatter={(z) => `z = ${z}`} />
-        <Legend wrapperStyle={{ fontSize: 12 }} />
+        <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12 }} />
         <Line type="monotone" dataKey="g" name="g(z)" stroke={t.series[0]} strokeWidth={2} dot={false} />
         <Line type="monotone" dataKey="d" name="g′(z)" stroke={t.series[1]} strokeWidth={2} strokeDasharray="5 4" dot={false} />
       </LineChart>
