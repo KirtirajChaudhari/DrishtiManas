@@ -1,5 +1,7 @@
 # Runtime dependencies for the web app / inference (kept deliberately small so the
 # service starts fast on Cloud Run, Railway and Vercel serverless functions).
+# Mirrored in pyproject.toml's [project.dependencies] for Vercel's uv-based Python
+# function build; keep the two lists in sync when a dependency changes.
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30
 python-multipart>=0.0.9
