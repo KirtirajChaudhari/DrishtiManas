@@ -69,8 +69,8 @@ export function TrainingCurve({
         <YAxis {...axisProps} width={52} tickFormatter={fmt} domain={metric === "acc" ? ["auto", "auto"] : [0, "auto"]} />
         <Tooltip {...tooltipProps} formatter={(v: number) => fmt(v)} labelFormatter={(e) => `Epoch ${e}`} />
         <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12, color: t.axis }} />
-        <Line type="monotone" dataKey={`train_${metric}`} name="Training" stroke={t.series[0]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-        <Line type="monotone" dataKey={`val_${metric}`} name="Validation" stroke={t.series[1]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+        <Line type="monotone" dataKey={`train_${metric}`} name="Training" stroke={t.series[0]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+        <Line type="monotone" dataKey={`val_${metric}`} name="Validation" stroke={t.series[1]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -112,6 +112,7 @@ export function RunsLossChart({ runs, height = 260 }: { runs: TuningRun[]; heigh
             dot={false}
             connectNulls
             activeDot={{ r: 4 }}
+            isAnimationActive={false}
           />
         ))}
       </LineChart>
@@ -137,8 +138,8 @@ export function RunsAccuracyBars({ runs, height = 260 }: { runs: TuningRun[]; he
         <YAxis {...axisProps} width={52} domain={[floor, 1]} tickFormatter={(v: number) => pct(v, 0)} />
         <Tooltip {...tooltipProps} cursor={{ fill: t.grid, opacity: 0.4 }} formatter={(v: number) => pct(v, 2)} />
         <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12 }} />
-        <Bar dataKey="train_acc" name="Training accuracy" fill={t.series[0]} radius={[4, 4, 0, 0]} maxBarSize={36} />
-        <Bar dataKey="val_acc" name="Validation accuracy" fill={t.series[1]} radius={[4, 4, 0, 0]} maxBarSize={36} />
+        <Bar dataKey="train_acc" name="Training accuracy" fill={t.series[0]} radius={[4, 4, 0, 0]} maxBarSize={36} isAnimationActive={false} />
+        <Bar dataKey="val_acc" name="Validation accuracy" fill={t.series[1]} radius={[4, 4, 0, 0]} maxBarSize={36} isAnimationActive={false} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -166,8 +167,8 @@ export function FunctionPlot({
         <YAxis {...axisProps} width={44} tickFormatter={(v: number) => v.toFixed(1)} />
         <Tooltip {...tooltipProps} formatter={(v: number) => v.toFixed(3)} labelFormatter={(z) => `z = ${z}`} />
         <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12 }} />
-        <Line type="monotone" dataKey="g" name="g(z)" stroke={t.series[0]} strokeWidth={2} dot={false} />
-        <Line type="monotone" dataKey="d" name="g′(z)" stroke={t.series[1]} strokeWidth={2} strokeDasharray="5 4" dot={false} />
+        <Line type="monotone" dataKey="g" name="g(z)" stroke={t.series[0]} strokeWidth={2} dot={false} isAnimationActive={false} />
+        <Line type="monotone" dataKey="d" name="g′(z)" stroke={t.series[1]} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
       </LineChart>
     </ResponsiveContainer>
   );
